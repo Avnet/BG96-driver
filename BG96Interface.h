@@ -41,11 +41,10 @@
 
 #define APN_DEFAULT          "m2m.com.attz"
 #define BG96_MISC_TIMEOUT    15000
-#define BG96_SOCKET_COUNT    3
+#define BG96_SOCKET_COUNT    5
 
 #define DBGMSG_DRV           0x04
 #define DBGMSG_EQ            0x08
-#define DBGMSG_SMS           0x10
 #define DBGMSG_ARRY          0x20
 
 #define READ_INIT            10
@@ -64,6 +63,7 @@ typedef struct rx_event_t {
     int      m_rx_socketID;         //which socket is being rcvd on
     uint8_t *m_rx_dptr;             //pointer to the users data buffer
     uint32_t m_rx_req_size;         //Requested number of bytes to receive
+    uint32_t m_rx_asked_size;
     uint32_t m_rx_total_cnt;        //Total number of bytes received
     int      m_rx_timer;            //Rx Timeout Timer
     int      m_rx_disTO;            //Flag to disable Timeout Timer
@@ -89,7 +89,6 @@ typedef struct tx_event_t {
  */
 typedef struct _socket_t {
     int              id;                   //nbr given by BG96 driver or -1 if not used
-    int              index;                //index of this socket
     SocketAddress    addr;                 //address this socket is attached to
     bool             disTO;                //true of socket is listening for incomming data
     nsapi_protocol_t proto;                //TCP or UDP
@@ -101,7 +100,7 @@ typedef struct _socket_t {
     } BG96SOCKET;
 
 
-class BG96Interface : public NetworkStack, public CellularInterface
+class BG96Interface : public NetworkStack, public NetworkInterface
 {
 public:
     BG96Interface();
@@ -323,19 +322,27 @@ protected:
 
 private:
     
-    bool       isInitialized;                          //TRUE if the BG96Interface is connected to the network
-    int        tx_event(TXEVENT *ptr);                 //called to TX data
-    int        rx_event(RXEVENT *ptr);                 //called to RX data
-    int        _bg96_queue_id;                         //the ID of the EventQueue used by the driver
-    void       _eq_event(void);                        //event queue to tx/rx
-    BG96SOCKET _sock[BG96_SOCKET_COUNT];               //
-    TXEVENT    _socTx[BG96_SOCKET_COUNT];              //
-    RXEVENT    _socRx[BG96_SOCKET_COUNT];              //
+    int        tx_event(TXEVENT *ptr);                  //called to TX data
+    int        rx_event(RXEVENT *ptr);                  //called to RX data
+    bool       g_isInitialized;                         //TRUE if the BG96Interface is connected to the network
+    int        g_bg96_queue_id;                         //the ID of the EventQueue used by the driver
+    void       g_eq_event(void);                        //event queue to tx/rx
+    BG96SOCKET g_sock[BG96_SOCKET_COUNT];               //
+    TXEVENT    g_socTx[BG96_SOCKET_COUNT];              //
+    RXEVENT    g_socRx[BG96_SOCKET_COUNT];              //
+
+    Thread     _bg96_monitor;
+    EventQueue _bg96_queue;
+
+    Mutex      gvupdate_mutex;                          //global variable update mutex
+    Mutex      txrx_mutex;                              //manage access to RX/TX event queue
+    BG96       _BG96;                                   //create the BG96 HW interface object
 
     #if MBED_CONF_APP_BG96_DEBUG == true
-    int        m_debug;                                //flag for debug settings
-    void _dbDump_arry( const uint8_t* data, unsigned int size );
-    void _dbOut(const char *format, ...);
+    Mutex      dbgout_mutex;
+    int        g_debug;                                 //flag for debug settings
+    void       _dbDump_arry( const uint8_t* data, unsigned int size );
+    void       _dbOut(int, const char *format, ...);
     #endif
     
 };

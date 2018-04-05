@@ -42,9 +42,10 @@
 class BG96
 {
 public:
-    static const unsigned BG96_BUFF_SIZE = 1460;  //max size BG96 TX buffer can handle
+    static const unsigned BG96_BUFF_SIZE = 1024;    //max size BG96 TX buffer can handle
     
     BG96(bool debug=false);
+    ~BG96();
 
     /**
     * Init the BG96
@@ -90,14 +91,14 @@ public:
     *
     * @return null-teriminated IP address or null if no IP address is assigned
     */
-    const char *getIPAddress(void);
+    const char *getIPAddress(char*);
  
     /**
     * Get the MAC address of BG96
     *
     * @return null-terminated MAC address or null if no MAC address is assigned
     */
-    const char *getMACAddress(void);
+    const char *getMACAddress(char*);
  
     /**
     * Check if BG96 is conenected
@@ -115,7 +116,7 @@ public:
     * @param addr the IP address of the destination
     * @return true only if socket opened successfully
     */
-    bool open(const char type, int* id, const char* addr, int port);
+    bool open(const char type, int id, const char* addr, int port);
  
     /**
     * Sends data to an open socket
@@ -158,7 +159,7 @@ public:
     /**
     * Resolves a URL name to IP address
     */
-    const char *resolveUrl(const char *name);
+    bool resolveUrl(const char *name, char* str);
  
     /*
     * Obtain or set the current BG96 active context
@@ -174,15 +175,24 @@ public:
      *
      *  @param          none.
      */
-    const char* getRev(void);
+    const char* getRev(char*);
 
 private:
-    bool     tx2bg96(char* cmd);
+    bool        tx2bg96(char* cmd);
+    bool        BG96Ready(void);
+    bool        hw_reset(void);
+    bool        rxAvail(int id);
 
-    bool     BG96Ready(void);
-    bool     hw_reset(void);
-    int      rxAvail(int id);
-    int      _contextActive;
+    int         _contextID;
+    Mutex       _bg96_mutex;
+
+    UARTSerial  _serial;
+    ATCmdParser _parser;
+
+    DigitalOut _bg96_reset;
+    DigitalOut _vbat_3v8_en;
+    DigitalOut _bg96_pwrkey;
+    
 };
  
 #endif  //__BG96_H__
