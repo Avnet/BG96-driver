@@ -34,83 +34,86 @@
 #include "mbed_debug.h"
 #include "BG96.h"
 
-#define BG96_60s_TO             60000
-#define BG96_150s_TO            150000
-#define BG96_1s_WAIT            1000 //will wait for 1 second for startup
-#define BG96_TX_TIMEOUT         250
-#define BG96_WAIT4READY         15000 
-#define BG96_AT_TIMEOUT         1000
-#define BG96_WRK_CONTEXT        1     //we will only use context 1 in driver
+#define BG96_1s_WAIT            1000   //will wait for 1 second for startup
+#define BG96_60s_TO             60000  //wait 60 seconds
+#define BG96_150s_TO            150000 //wait 150s (2.5 mins)
+#define BG96_TX_TIMEOUT         2000   //time before a TX timeout occurs
+#define BG96_RX_TIMEOUT         1000   //time before a TX timeout occurs
+#define BG96_WAIT4READY         15000  //wait 15 seconds for 'RDY' after reset
+#define BG96_AT_TIMEOUT         1000   //standard AT command timeout
+#define BG96_WRK_CONTEXT        1      //we will only use context 1 in driver
+#define BG96_CLOSE_TO           1      //wait x seconds for a socket close
 
+//
+// if DEBUG is enabled, these macros are used to dump data arrays
+//
+#if MBED_CONF_APP_BG96_DEBUG == true
 #define TOSTR(x) #x
 #define INTSTR(x) TOSTR(x)
 #define DUMP_LOC (char*)(__FILE__ ":" INTSTR(__LINE__))
 
-//
-// if DEBUG is enabled, this macro can be used to dump data arrays
-//
-#if MBED_CONF_APP_BG96_DEBUG == true
-#define DUMP_ARRAY(x,s)	{\
-    int i, k;\
-    for (i=0; i<s; i+=16) {\
-        printf("[%s]:0x%04X: ",DUMP_LOC,i);\
-        for (k=0; k<16; k++) {\
-            if( (i+k)<s )\
-                printf("%02X ", x[i+k]);\
-            else\
-                printf("   ");\
-            }\
-        printf("    ");\
-        for (k=0; k<16; k++) {\
-            if( (i+k)<s )\
-                printf("%c", isprint(x[i+k])? x[i+k]:'.');\
-            }\
-        printf("\n\r");\
-        }\
+#define DUMP_ARRAY(x,s)	{                                  \
+    int i, k;                                              \
+    for (i=0; i<s; i+=16) {                                \
+        printf("[%s]:0x%04X: ",DUMP_LOC,i);                \
+        for (k=0; k<16; k++) {                             \
+            if( (i+k)<s )                                  \
+                printf("%02X ", x[i+k]);                   \
+            else                                           \
+                printf("   ");                             \
+            }                                              \
+        printf("    ");                                    \
+        for (k=0; k<16; k++) {                             \
+            if( (i+k)<s )                                  \
+                printf("%c", isprint(x[i+k])? x[i+k]:'.'); \
+            }                                              \
+        printf("\n\r");                                    \
+        }                                                  \
     }
 #else
 #define DUMP_ARRAY(x,s) /* not used */
 #endif
-
-DigitalOut BG96_reset(MBED_CONF_BG96_LIBRARY_BG96_RESET); 
-DigitalOut VBAT_3V8_EN(MBED_CONF_BG96_LIBRARY_BG96_WAKE);
-DigitalOut BG96_PWRKEY(MBED_CONF_BG96_LIBRARY_BG96_PWRKEY);
-    
-static UARTSerial  _serial(MBED_CONF_BG96_LIBRARY_BG96_TX, MBED_CONF_BG96_LIBRARY_BG96_RX);
-static ATCmdParser _parser(&_serial);
-
-/** ----------------------------------------------------------
-* @brief  get BG96 SW version
-* @param  none
-* @retval string containing SW version
-*/
-const char* BG96::getRev(void)
-{
-    static char combined[40];
-    char        buf1[20], buf2[20];
-
-    if( !tx2bg96((char*)"AT+CGMM") )
-        return NULL;
-    if( !( _parser.recv("%s\n",buf1) && _parser.recv("OK")) )
-        return NULL;
-    if( !(_parser.send("AT+CGMR") && _parser.recv("%s\n",buf2) && _parser.recv("OK")) )
-        return NULL;
-
-    sprintf(combined,"%s Rev:%s",buf1,buf2);
-    return (const char*) combined;
-}
 
 /** ----------------------------------------------------------
 * @brief  constructor
 * @param  none
 * @retval none
 */
-BG96::BG96(bool debug) : _contextActive(1)
+BG96::BG96(bool debug) :  
+    _contextID(1), 
+    _serial(MBED_CONF_BG96_LIBRARY_BG96_TX, MBED_CONF_BG96_LIBRARY_BG96_RX), 
+    _parser(&_serial),
+    _bg96_reset(MBED_CONF_BG96_LIBRARY_BG96_RESET),
+    _vbat_3v8_en(MBED_CONF_BG96_LIBRARY_BG96_WAKE),
+    _bg96_pwrkey(MBED_CONF_BG96_LIBRARY_BG96_PWRKEY)
 {
     _serial.set_baud(115200);
     _parser.debug_on(debug);
     _parser.set_timeout(BG96_AT_TIMEOUT);
     _parser.set_delimiter("\r\n");
+}
+
+BG96::~BG96(void)
+{ }
+
+/** ----------------------------------------------------------
+* @brief  get BG96 SW version
+* @param  none
+* @retval string containing SW version
+*/
+const char* BG96::getRev(char* combined)
+{
+    bool        ok=false;
+    char        buf1[20], buf2[20];
+
+    _bg96_mutex.lock();
+    ok = (tx2bg96((char*)"AT+CGMM") && _parser.recv("%s\n",buf1) && _parser.recv("OK") &&
+          _parser.send("AT+CGMR") && _parser.recv("%s\n",buf2) && _parser.recv("OK")    );
+    _bg96_mutex.unlock();
+
+    if( ok ) 
+        sprintf(combined,"%s Rev:%s",buf1,buf2);
+    return ok? (const char*) combined : NULL;
 }
 
 /** ----------------------------------------------------------
@@ -129,7 +132,11 @@ void BG96::doDebug(int f)
 * @retval true if OK received, false otherwise
 */
 bool BG96::tx2bg96(char* cmd) {
-    return (_parser.send(cmd) && _parser.recv("OK"));
+    bool ok=false;
+    _bg96_mutex.lock();
+    ok=_parser.send(cmd) && _parser.recv("OK");
+    _bg96_mutex.unlock();
+    return ok;
 }
 
 /** ----------------------------------------------------------
@@ -147,9 +154,9 @@ int BG96::setContext( int i )
         return -1;
 
     if( i < 1 )
-        return _contextActive;
+        return _contextID;
 
-    return _contextActive = i;
+    return _contextID = i;
 }
 
 /** ----------------------------------------------------------
@@ -159,17 +166,17 @@ int BG96::setContext( int i )
 */
 void BG96::reset(void)
 {
-    BG96_reset = 0;
-    BG96_PWRKEY = 0;
-    VBAT_3V8_EN = 0;
+    _bg96_reset = 0;
+    _bg96_pwrkey = 0;
+    _vbat_3v8_en = 0;
     wait_ms(300);
 
-    BG96_reset = 1;
-    VBAT_3V8_EN = 1;
-    BG96_PWRKEY = 1;
+    _bg96_reset = 1;
+    _vbat_3v8_en = 1;
+    _bg96_pwrkey = 1;
     wait_ms(400);
 
-    BG96_reset = 0;
+    _bg96_reset = 0;
     wait_ms(10);
 }
 
@@ -183,10 +190,12 @@ bool BG96::BG96Ready(void)
     Timer t;
     int   done=false;
     
+    _bg96_mutex.lock();
     reset();
     t.start();
     while( !done && t.read_ms() < BG96_WAIT4READY )
         done = _parser.recv("RDY");
+    _bg96_mutex.unlock();
     return done;
 }
 
@@ -198,19 +207,17 @@ bool BG96::BG96Ready(void)
 */
 bool BG96::startup(void)
 {
-    Timer t;
     int   done=false;
     
     if( !BG96Ready() )
         return false;
         
-    _parser.set_timeout(BG96_AT_TIMEOUT*2);
-    if( !tx2bg96((char*)"ATE0") )
-        return false; 
-    t.start();
-    while( t.read_ms() < BG96_1s_WAIT && !done ) 
+    _bg96_mutex.lock();
+    _parser.set_timeout(BG96_1s_WAIT);
+    if( tx2bg96((char*)"ATE0") )
         done = tx2bg96((char*)"AT+COPS?");
     _parser.set_timeout(BG96_AT_TIMEOUT);
+    _bg96_mutex.unlock();
     return done;
  }
 
@@ -229,29 +236,35 @@ nsapi_error_t BG96::connect(const char *apn, const char *username, const char *p
     Timer t;
     int   cntx;
     
+    _bg96_mutex.lock();
     t.start();
     do {
-        _parser.send("AT+QICSGP=%d",_contextActive);
+        _parser.send("AT+QICSGP=%d",_contextID);
         done = _parser.recv("+QICSGP: %d, \"%50[^\"]\"",&cntx, _apn);
         wait_ms(2);
         }
     while( !done && t.read_ms() < BG96_60s_TO );
 
-    if( !done )
+    if( !done ) {
+        _bg96_mutex.unlock();
         return NSAPI_ERROR_DEVICE_ERROR;
+        }
 
     _parser.flush();    
     if( strcmp(_apn,apn) ) {
-        sprintf(cmd,"AT+QICSGP=%d,1,\"%s\",\"%s\",\"%s\",0", _contextActive, &apn[0], &username[0], &password[0]);
-        if( !tx2bg96(cmd) )  
+        sprintf(cmd,"AT+QICSGP=%d,1,\"%s\",\"%s\",\"%s\",0", _contextID, &apn[0], &username[0], &password[0]);
+        if( !tx2bg96(cmd) )  {
+            _bg96_mutex.unlock();
             return NSAPI_ERROR_DEVICE_ERROR;
+            }
         }
 
-    sprintf(cmd,"AT+QIACT=%d", _contextActive);
+    sprintf(cmd,"AT+QIACT=%d", _contextID);
     t.reset();
     done=false;
     while( !done && t.read_ms() < BG96_150s_TO ) 
         done = tx2bg96(cmd);
+    _bg96_mutex.unlock();
     
     return done? NSAPI_ERROR_OK : NSAPI_ERROR_DEVICE_ERROR;
 }
@@ -264,7 +277,7 @@ nsapi_error_t BG96::connect(const char *apn, const char *username, const char *p
 bool BG96::disconnect(void)
 {
     char buff[15];
-    sprintf(buff,"AT+QIDEACT=%d\r",_contextActive);
+    sprintf(buff,"AT+QIDEACT=%d\r",_contextID);
     return tx2bg96(buff);
 }
 
@@ -273,29 +286,30 @@ bool BG96::disconnect(void)
 * @param  string containing the URL 
 * @retval string containing the IP results from the URL DNS
 */
-const char* BG96::resolveUrl(const char *name)
+bool BG96::resolveUrl(const char *name, char* ipstr)
 {
-    static char buf[25], buf2[25];
+    char buf2[50];
+    bool ok;
     int  err, ipcount, dnsttl;
     
-    if( !_parser.send("AT+QIDNSGIP=%d,\"%s\"",_contextActive,name) && !_parser.recv("OK") )
-        return NULL;
+    _bg96_mutex.lock();
+    _parser.set_timeout(BG96_60s_TO);
+    ok =  (    _parser.send("AT+QIDNSGIP=%d,\"%s\"",_contextID,name)
+            && _parser.recv("OK") 
+            && _parser.recv("+QIURC: \"dnsgip\",%d,%d,%d",&err, &ipcount, &dnsttl) 
+            && err==0 
+            && ipcount > 0
+          );
 
-    if( !_parser.send("+QIURC: \"recv\",%d",_contextActive) && !_parser.recv("OK") )
-        return NULL;
+    if( ok ) {
+        _parser.recv("+QIURC: \"dnsgip\",\"%[^\"]\"",ipstr);       //use the first DNS value
+        for( int i=0; i<ipcount-1; i++ )
+            _parser.recv("+QIURC: \"dnsgip\",\"%[^\"]\"", buf2);   //and discrard the rest  if >1
+        }
+    _parser.set_timeout(BG96_AT_TIMEOUT);
+    _bg96_mutex.unlock();
         
-    if( !_parser.recv("+QIURC: \"dnsgip\",%d,%d,%d",&err, &ipcount, &dnsttl) )
-        return NULL;
-        
-    if( err || ipcount < 1 )
-        return NULL;
-
-    _parser.recv("+QIURC: \"dnsgip\",\"%[^\"]\"",buf);
-            
-    for( int i=0; i<ipcount-1; i++ )
-        _parser.recv("+QIURC: \"dnsgip\",\"%[^\"]\"",buf2);    
-        
-    return buf;
+    return ok;
 }
 
 /** ----------------------------------------------------------
@@ -324,20 +338,16 @@ bool BG96::writeable()
 * @param  none
 * @retval string containing IP or NULL on failure
 */
-const char *BG96::getIPAddress(void)
+const char *BG96::getIPAddress(char *ipstr)
 {
-    static char ipstr[17];
-    Timer t;
     int   cs, ct;
     bool  done=false;
 
-    t.start();
-    for( int times=0; times<3 && !done; times++ ) {
-        done = !_parser.send("AT+QIACT?");
-        t.reset();
-        while( !done && t.read_ms() < BG96_60s_TO )
-            done = _parser.recv("+QIACT: 1, %d,%d,\"%16[^\"]\"",&cs,&ct,ipstr);
-        }
+    _bg96_mutex.lock();
+    _parser.set_timeout(BG96_150s_TO);
+    done = _parser.send("AT+QIACT?") && _parser.recv("+QIACT: 1, %d,%d,\"%16[^\"]\"",&cs,&ct,ipstr);
+    _parser.set_timeout(BG96_AT_TIMEOUT);
+    _bg96_mutex.unlock();
 
     return done? ipstr:NULL;
 }
@@ -348,19 +358,21 @@ const char *BG96::getIPAddress(void)
 * @retval string containing the MAC or NULL on failure
 *         MAC is created using the ICCID of the SIM
 */
-const char *BG96::getMACAddress(void)
+const char *BG96::getMACAddress(char* sn)
 {
-    static char sn[27];
  
-    memset(sn,':',sizeof(sn));    
-    if( !_parser.send("AT+QCCID") )
-        return NULL;
-    _parser.recv("+QCCID: %c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c",
+    memset(sn,0x00,sizeof(sn));    
+    _bg96_mutex.lock();
+    if( _parser.send("AT+QCCID") ) {
+        memset(sn,':',sizeof(sn));    
+        _parser.recv("+QCCID: %c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c",
             &sn[26], &sn[25], &sn[24],&sn[23],&sn[22],
             &sn[21], &sn[19], &sn[18],&sn[16],&sn[15],
             &sn[13], &sn[12], &sn[10],&sn[9], &sn[7],
             &sn[6],  &sn[4],  &sn[3], &sn[1], &sn[0]); 
-    sn[20] = 0x00; 
+        sn[20] = 0x00; 
+        }
+    _bg96_mutex.unlock();
 
     return (const char*)sn;
 }
@@ -372,7 +384,8 @@ const char *BG96::getMACAddress(void)
 */
 bool BG96::isConnected(void)
 {
-    return getIPAddress() != NULL;
+    char ip[25];
+    return getIPAddress(ip) != NULL;
 }
 
 /** ----------------------------------------------------------
@@ -383,24 +396,48 @@ bool BG96::isConnected(void)
 * @param  port of the socket
 * @retval true if successful, else false on failure
 */
-bool BG96::open(const char type, int* id, const char* addr, int port)
+bool BG96::open(const char type, int id, const char* addr, int port)
 {
     char* stype = (char*)"TCP";
-    int   conId = 0;  //connection type is TCP
+    char  cmd[20];
     int   err=1;
+    bool  ok;
       
-    if( type == 'u' ) {
+    if( type == 'u' ) 
       stype = (char*)"UDP";
-      conId = 2;  //connection type is UDP
-      }
       
-    if( !_parser.send("AT+QIOPEN=%d,%d,\"%s\",\"%s\",%d,0,0\r", _contextActive, conId, stype, addr, port) )
-        return false;
+    _bg96_mutex.lock();
+    sprintf(cmd,"+QIOPEN: %d,%%d", id);
+    _parser.set_timeout(BG96_150s_TO);
+    ok=_parser.send("AT+QIOPEN=%d,%d,\"%s\",\"%s\",%d,0,0\r", _contextID, id, stype, addr, port)
+        && _parser.recv(cmd, &err) 
+        && err == 0;
+    _parser.set_timeout(BG96_AT_TIMEOUT);
+    _bg96_mutex.unlock();
 
-    if( !_parser.recv("+QIOPEN: %d,%d", id, &err) )
-        return false;
-    return !err;
+    return ok;
 }
+
+/** ----------------------------------------------------------
+* @brief  get last error code
+* @param  none.
+* @retval returns true/false if successful and updated error string
+*/
+bool BG96::getError(char *str)
+{
+    char lstr[4];
+    int  err;
+    memset(lstr,0x00,sizeof(lstr));
+    _bg96_mutex.lock();
+    bool done = (_parser.send("AT+QIGETERROR") 
+              && _parser.recv("+QIGETERROR: %d,%[^\\r]",&err,lstr)
+              && _parser.recv("OK") );
+    _bg96_mutex.unlock();
+    if( done )
+        sprintf(str,"Error:%d",err);
+    return done;
+}
+
 
 /** ----------------------------------------------------------
 * @brief  close the BG96 socket
@@ -409,46 +446,14 @@ bool BG96::open(const char type, int* id, const char* addr, int port)
 */
 bool BG96::close(int id)
 {
-    Timer t;
     bool  done=false;
-    int   rxcnt=0;
-    void* data = NULL;
 
-    _parser.flush();
-    rxcnt = rxAvail(id);     /* flush BG96 buffer... */
-
-    if (rxcnt>0) {
-        data = malloc (rxcnt+4);
-        if(!((_parser.read((char*)data, rxcnt) >0) && _parser.recv("OK"))) {
-            free (data);
-            return -4;
-            }
-        free (data);
-        }
-
-    t.start();
-    while( !done && t.read_ms() < BG96_150s_TO ) {
-        done = (_parser.send("AT+QICLOSE=%d", id) && _parser.recv("OK"));
-        wait_ms(25);
-        }
+    _bg96_mutex.lock();
+    _parser.set_timeout(BG96_150s_TO);
+    done = (_parser.send("AT+QICLOSE=%d,%d", id, BG96_CLOSE_TO) && _parser.recv("OK"));
+    _parser.set_timeout(BG96_AT_TIMEOUT);
+    _bg96_mutex.unlock();
     return done;
-}
-
-/** ----------------------------------------------------------
-* @brief  check for the amount of data available in RX buffer
-* @param  id of BG96 socket
-* @retval number of bytes in RX buffer or 0
-*/
-int BG96::rxAvail(int id)
-{
-    int   rcvd;
-    char  cmd[20];
-
-    sprintf(cmd, "+QIURC: \"recv\",%d", id);
-    if( _parser.recv(cmd) && _parser.send("AT+QIRD=%d,%d\r", id, BG96_BUFF_SIZE) && _parser.recv("+QIRD: %d\r\n", &rcvd) ) 
-        return rcvd;
-
-    return 0;
 }
 
 /** ----------------------------------------------------------
@@ -460,24 +465,56 @@ int BG96::rxAvail(int id)
 */
 bool BG96::send(int id, const void *data, uint32_t amount)
 {
-    Timer t;
-    bool done=false;
+    bool done;
      
-    if( !_parser.send("AT+QISEND=%d,%ld", id, amount) )
-        return false;
+    _bg96_mutex.lock();
+    _parser.set_timeout(BG96_TX_TIMEOUT);
 
-    if( !_parser.recv(">") )
-        return false;
+    done = !_parser.send("AT+QISEND=%d,%ld", id, amount);
+    if( !done && _parser.recv(">") )
+        done = (_parser.write((char*)data, (int)amount) <= 0);
 
-    if( _parser.write((char*)data, (int)amount) < 0 )
-        return false;
-
-    t.start();
-    while( !done && t.read_ms() < BG96_TX_TIMEOUT ) 
+    if( !done )
         done = _parser.recv("SEND OK");
+    _parser.set_timeout(BG96_AT_TIMEOUT);
+    _bg96_mutex.unlock();
 
     return done;
 }
+
+/** ----------------------------------------------------------
+* @brief  check if RX data has arrived
+* @param  id of BG96 socket
+* @retval true/false
+*/
+bool BG96::chkRxAvail(int id)
+{
+    char  cmd[20];
+
+    sprintf(cmd, "+QIURC: \"recv\",%d", id);
+    _parser.set_timeout(1);
+    int i = _parser.recv(cmd);
+    _parser.set_timeout(BG96_AT_TIMEOUT);
+    return i;
+}
+
+/** ----------------------------------------------------------
+* @brief  check for the amount of data available to read
+* @param  id of BG96 socket
+* @retval number of bytes in RX buffer or 0
+*/
+int BG96::rxAvail(int id)
+{
+    int trl, hrl, url;
+
+    _bg96_mutex.lock();
+    bool done = ( _parser.send("AT+QIRD=%d,0",id) && _parser.recv("+QIRD:%d,%d,%d",&trl, &hrl, &url) ); 
+    _bg96_mutex.unlock();
+    if( done )
+        return trl-hrl;
+    return 0;
+}
+
 
 /** ----------------------------------------------------------
 * @brief  receive data from BG96
@@ -490,16 +527,22 @@ int32_t BG96::recv(int id, void *data, uint32_t cnt)
 {
     int  rxCount, ret_cnt=0;
 
-    if( _parser.send("AT+QIRD=%d,%d",id,(int)cnt) && _parser.recv("+QIRD:%d\r\n",&rxCount) ) {
-        _parser.getc(); //for some reason BG96 always outputs a 0x0A before the data
-        _parser.read((char*)data, rxCount);
+    _bg96_mutex.lock();
+    chkRxAvail(id);
 
-        if( !_parser.recv("OK") )
-            return -6;
-        DUMP_ARRAY(((char*)data),rxCount);
+    if( _parser.send("AT+QIRD=%d,%d",id,(int)cnt) && _parser.recv("+QIRD:%d\r\n",&rxCount) ) {
+        if( rxCount > 0 ) {
+            _parser.getc(); //for some reason BG96 always outputs a 0x0A before the data
+            _parser.read((char*)data, rxCount);
+
+            if( !_parser.recv("OK") ) {
+                _bg96_mutex.unlock();
+                return NSAPI_ERROR_DEVICE_ERROR;
+                }
+            }
         ret_cnt = rxCount;
         }
-
+    _bg96_mutex.unlock();
     return ret_cnt;
 }
 
