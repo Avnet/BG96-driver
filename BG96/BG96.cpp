@@ -207,18 +207,14 @@ bool BG96::BG96Ready(void)
 */
 bool BG96::startup(void)
 {
-//    Timer t;
     int   done=false;
     
     if( !BG96Ready() )
         return false;
         
     _bg96_mutex.lock();
-    _parser.set_timeout(BG96_AT_TIMEOUT*2);
-_parser.set_timeout(BG96_1s_WAIT);
-    done=!tx2bg96((char*)"ATE0");
-//    t.start();
-//    while( t.read_ms() < BG96_1s_WAIT && !done ) 
+    _parser.set_timeout(BG96_1s_WAIT);
+    if( tx2bg96((char*)"ATE0") )
         done = tx2bg96((char*)"AT+COPS?");
     _parser.set_timeout(BG96_AT_TIMEOUT);
     _bg96_mutex.unlock();
@@ -268,7 +264,6 @@ nsapi_error_t BG96::connect(const char *apn, const char *username, const char *p
     done=false;
     while( !done && t.read_ms() < BG96_150s_TO ) 
         done = tx2bg96(cmd);
-//_parser.set_timeout(BG96_AT_TIMEOUT);
     _bg96_mutex.unlock();
     
     return done? NSAPI_ERROR_OK : NSAPI_ERROR_DEVICE_ERROR;
@@ -345,7 +340,6 @@ bool BG96::writeable()
 */
 const char *BG96::getIPAddress(char *ipstr)
 {
-//    Timer t;
     int   cs, ct;
     bool  done=false;
 
@@ -425,6 +419,27 @@ bool BG96::open(const char type, int id, const char* addr, int port)
 }
 
 /** ----------------------------------------------------------
+* @brief  get last error code
+* @param  none.
+* @retval returns true/false if successful and updated error string
+*/
+bool BG96::getError(char *str)
+{
+    char lstr[4];
+    int  err;
+    memset(lstr,0x00,sizeof(lstr));
+    _bg96_mutex.lock();
+    bool done = (_parser.send("AT+QIGETERROR") 
+              && _parser.recv("+QIGETERROR: %d,%[^\\r]",&err,lstr)
+              && _parser.recv("OK") );
+    _bg96_mutex.unlock();
+    if( done )
+        sprintf(str,"Error:%d",err);
+    return done;
+}
+
+
+/** ----------------------------------------------------------
 * @brief  close the BG96 socket
 * @param  id of BG96 socket
 * @retval true of close successful false on failure. <0 if error
@@ -468,11 +483,11 @@ bool BG96::send(int id, const void *data, uint32_t amount)
 }
 
 /** ----------------------------------------------------------
-* @brief  check for the amount of data available in RX buffer
+* @brief  check if RX data has arrived
 * @param  id of BG96 socket
-* @retval number of bytes in RX buffer or 0
+* @retval true/false
 */
-bool BG96::rxAvail(int id)
+bool BG96::chkRxAvail(int id)
 {
     char  cmd[20];
 
@@ -482,6 +497,24 @@ bool BG96::rxAvail(int id)
     _parser.set_timeout(BG96_AT_TIMEOUT);
     return i;
 }
+
+/** ----------------------------------------------------------
+* @brief  check for the amount of data available to read
+* @param  id of BG96 socket
+* @retval number of bytes in RX buffer or 0
+*/
+int BG96::rxAvail(int id)
+{
+    int trl, hrl, url;
+
+    _bg96_mutex.lock();
+    bool done = ( _parser.send("AT+QIRD=%d,0",id) && _parser.recv("+QIRD:%d,%d,%d",&trl, &hrl, &url) ); 
+    _bg96_mutex.unlock();
+    if( done )
+        return trl-hrl;
+    return 0;
+}
+
 
 /** ----------------------------------------------------------
 * @brief  receive data from BG96
@@ -495,7 +528,7 @@ int32_t BG96::recv(int id, void *data, uint32_t cnt)
     int  rxCount, ret_cnt=0;
 
     _bg96_mutex.lock();
-    rxAvail(id);
+    chkRxAvail(id);
 
     if( _parser.send("AT+QIRD=%d,%d",id,(int)cnt) && _parser.recv("+QIRD:%d\r\n",&rxCount) ) {
         if( rxCount > 0 ) {

@@ -47,15 +47,6 @@
 #define DBGMSG_EQ            0x08
 #define DBGMSG_ARRY          0x20
 
-#define READ_INIT            10
-#define READ_START           11
-#define READ_ACTIVE          12
-#define DATA_AVAILABLE       13
-#define TX_IDLE              20
-#define TX_STARTING          21
-#define TX_ACTIVE            22
-#define TX_COMPLETE          23
-
 #define FIRMWARE_REV(x)      (((BG96Interface*)x)->getRevision())
 
 typedef struct rx_event_t {
@@ -324,18 +315,20 @@ private:
     
     int        tx_event(TXEVENT *ptr);                  //called to TX data
     int        rx_event(RXEVENT *ptr);                  //called to RX data
+    void       g_eq_event(void);                        //event queue to tx/rx
+
     bool       g_isInitialized;                         //TRUE if the BG96Interface is connected to the network
     int        g_bg96_queue_id;                         //the ID of the EventQueue used by the driver
-    void       g_eq_event(void);                        //event queue to tx/rx
+
     BG96SOCKET g_sock[BG96_SOCKET_COUNT];               //
     TXEVENT    g_socTx[BG96_SOCKET_COUNT];              //
     RXEVENT    g_socRx[BG96_SOCKET_COUNT];              //
 
-    Thread     _bg96_monitor;
+    Thread     _bg96_monitor;                           //event queue thread
     EventQueue _bg96_queue;
 
-    Mutex      gvupdate_mutex;                          //global variable update mutex
-    Mutex      txrx_mutex;                              //manage access to RX/TX event queue
+    Mutex      gvupdate_mutex;                          //protect global variable updates
+    Mutex      txrx_mutex;                              //protect RX/TX event queue activities
     BG96       _BG96;                                   //create the BG96 HW interface object
 
     #if MBED_CONF_APP_BG96_DEBUG == true

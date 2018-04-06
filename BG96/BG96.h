@@ -42,7 +42,7 @@
 class BG96
 {
 public:
-    static const unsigned BG96_BUFF_SIZE = 1024;    //max size BG96 TX buffer can handle
+    static const unsigned BG96_BUFF_SIZE = 1500;  
     
     BG96(bool debug=false);
     ~BG96();
@@ -177,11 +177,28 @@ public:
      */
     const char* getRev(char*);
 
+    /** Return the last error to occur
+     *
+     *  @param          char* [at least 40 long]
+     */
+    bool getError(char *);
+
+    /** Return the amount a data available
+     *
+     *  @param          char* [at least 40 long]
+     */
+    int rxAvail(int);
+
+    /** Return true/false if rx data is available 
+     *
+     *  @param          socket to check
+     */
+    bool        chkRxAvail(int id);
+
 private:
     bool        tx2bg96(char* cmd);
     bool        BG96Ready(void);
     bool        hw_reset(void);
-    bool        rxAvail(int id);
 
     int         _contextID;
     Mutex       _bg96_mutex;

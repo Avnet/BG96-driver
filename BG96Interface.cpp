@@ -33,17 +33,41 @@
 #include "BG96.h"
 #include "BG96Interface.h"
 
+//
+// The driver uses a simple/basic state machine to manage receiving and transmitting
+// data.  These are the states that are used
+//
+#define READ_INIT            10                        //initialize for a read state
+#define READ_START           11                        //start reading from the BG96
+#define READ_ACTIVE          12                        //a read is on-going/active
+#define READ_DOCB            13                        //need to perform a call-back on the socket
+#define DATA_AVAILABLE       14                        //indicates that rx data is available
+
+#define TX_IDLE              20                        //indicates that no data is bing TX'd
+#define TX_STARTING          21                        //indicates that TX data is starting
+#define TX_ACTIVE            22                        //indicates that TX data is being sent
+#define TX_COMPLETE          23                        //all TX data has been sent
+#define TX_DOCB              24                        //indicatew we need to exeucte the call-back
+                              
+#define BG96_READ_TIMEOUTMS    30000                    //read timeout in MS
+#define EQ_FREQ                50                       //frequency in ms to check for Tx/Rx data
+#define EQ_FREQ_SLOW           2000                     //frequency in ms to check when in slow monitor mode
+#define EQ_LONG_DELAY          EQ_FREQ_SLOW*2           //when tne BG96 needs time to do an internal recover
+
+#define EVENT_COMPLETE         0                        //signals when a TX/RX event is complete
+#define EVENT_DELAY            0x80                     //signals when a the BG96 needs additional time
+#define EVENT_GETMORE          0x01                     //signals when we need additional TX/RX data
+
+//
+// The following are only used when debug is eabled.
+//
+
 #if MBED_CONF_APP_BG96_DEBUG == true
 #define debugOutput(...)      _dbOut(__VA_ARGS__)
 #define debugDump_arry(...)   _dbDump_arry(__VA_ARGS__)
-#else
-#define debugOutput(...)      {/* __VA_ARGS__ */}
-#define debugDump_arry(...)   {/* __VA_ARGS__ */}
-#endif
-                              
-#define BG96_READ_TIMEOUTMS    2000                     //read timeout in MS
-#define EQ_FREQ                200                      //frequency in ms to check for Tx/Rx data
-#define EQ_FREQ_SLOW           2000                     //frequency in ms to check when in slow monitor mode
+
+#define dbgIO_lock            dbgout_mutex.lock();      //used to prevent stdio output over-writes
+#define dbgIO_unlock          dbgout_mutex.unlock();    //when executing--including BG96 debug output
 
 /** functions to output debug data---------------------------
 *
@@ -53,10 +77,7 @@
 *  @return void
 *  @date 1-Feb-2018
 */
-#if MBED_CONF_APP_BG96_DEBUG == true
 
-#define dbgIO_lock    dbgout_mutex.lock();
-#define dbgIO_unlock  dbgout_mutex.unlock();
 
 void BG96Interface::_dbDump_arry( const uint8_t* data, unsigned int size )
 {
@@ -98,9 +119,14 @@ void BG96Interface::_dbOut(int who, const char* format, ...)
         }
     dbgIO_unlock;
 }
+
 #else
+
 #define dbgIO_lock    
 #define dbgIO_unlock  
+#define debugOutput(...)      {/* __VA_ARGS__ */}
+#define debugDump_arry(...)   {/* __VA_ARGS__ */}
+
 #endif  //MBED_CONF_APP_BG96_DEBUG == true
 
 
@@ -424,8 +450,7 @@ int BG96Interface::socket_open(void **handle, nsapi_protocol_t proto)
 
     debugOutput(DBGMSG_DRV,"ENTER socket_open(), protocol=%s", (proto==NSAPI_TCP)?"TCP":"UDP");
     gvupdate_mutex.lock();
-    //find the next available socket...
-    for( i=0; i<BG96_SOCKET_COUNT; i++ )
+    for( i=0; i<BG96_SOCKET_COUNT; i++ )     //find the next available socket...
         if( g_sock[i].id == -1  )
             break;
 
@@ -473,25 +498,23 @@ int BG96Interface::socket_close(void *handle)
         txsock = &g_socTx[i];
         rxsock = &g_socRx[i];
 
-        txsock->m_tx_state = TX_IDLE;               //reset TX state
-        if( rxsock->m_rx_state != READ_START ) {    //reset RX state
-            rxsock->m_rx_disTO=false;
-            while( rxsock->m_rx_state !=  DATA_AVAILABLE ) 
-                wait(1);  //someone called close while a read was happening
-            }
+        txrx_mutex.lock();
+        txsock->m_tx_state = TX_IDLE;
+        rxsock->m_rx_state = READ_START;
 
         dbgIO_lock;
         if( sock->connected ) 
             _BG96.close(sock->id);
         dbgIO_unlock;
 
-        sock->id    = -1;
+        sock->id       = -1;
         sock->disTO    = false;
         sock->proto    = NSAPI_TCP;
         sock->connected= false;
         sock->_callback= NULL;
         sock->_data    = NULL;
         ret = NSAPI_ERROR_OK;
+        txrx_mutex.unlock();
         debugOutput(DBGMSG_DRV,"EXIT socket_close(), socket %d - success",i);
         }
     else
@@ -572,7 +595,8 @@ nsapi_error_t BG96Interface::gethostbyname(const char* name, SocketAddress *addr
     bool          ok;
     nsapi_error_t ret=NSAPI_ERROR_OK;
 
-    debugOutput(DBGMSG_DRV,"ENTER gethostbyname(); IP=%s; PORT=%d; URL=%s;", address->get_ip_address(), address->get_port(), name);
+    debugOutput(DBGMSG_DRV,"ENTER gethostbyname(); IP=%s; PORT=%d; URL=%s;", 
+                address->get_ip_address(), address->get_port(), name);
 
     dbgIO_lock;
     ok=_BG96.resolveUrl(name,ipstr);
@@ -584,41 +608,10 @@ nsapi_error_t BG96Interface::gethostbyname(const char* name, SocketAddress *addr
         }
     else{
         address->set_ip_address(ipstr);
-        debugOutput(DBGMSG_DRV,"EXIT gethostbyname(); IP=%s; PORT=%d; URL=%s;", address->get_ip_address(), address->get_port(), name);
+        debugOutput(DBGMSG_DRV,"EXIT gethostbyname(); IP=%s; PORT=%d; URL=%s;", 
+                    address->get_ip_address(), address->get_port(), name);
         }
     return ret;
-}
-
-/**----------------------------------------------------------
-*  @brief  periodic event(EventQueu thread) to check for RX and TX data. If checking for RX data with TO disabled
-*          slow down event checking after a while.
-*  @param  none
-*  @retval none
-*/
-//check any sockets that have socket->disTO set to see if any messages have arrived.
-void BG96Interface::g_eq_event(void)
-{
-    int done = 0;
-    bool goSlow = true;
-
-    txrx_mutex.lock();
-    for( unsigned int i=0; i<BG96_SOCKET_COUNT; i++ ) {
-        if( g_socRx[i].m_rx_state == READ_ACTIVE || g_socRx[i].m_rx_disTO) {
-            done += rx_event(&g_socRx[i]);
-            goSlow &= ( g_socRx[i].m_rx_timer > ((BG96_READ_TIMEOUTMS/EQ_FREQ)*(EQ_FREQ_SLOW/EQ_FREQ)) );
-   
-            if( goSlow ) 
-                g_socRx[i].m_rx_timer = (BG96_READ_TIMEOUTMS/EQ_FREQ)*(EQ_FREQ_SLOW/EQ_FREQ);
-            }
-
-        if( g_socTx[i].m_tx_state == TX_ACTIVE ) {
-            goSlow = false;
-            done += tx_event(&g_socTx[i]);
-            }
-        }
-    txrx_mutex.unlock();
-    if( done>0 )  
-        _bg96_queue.call_in((goSlow?EQ_FREQ_SLOW:EQ_FREQ),mbed::Callback<void()>((BG96Interface*)this,&BG96Interface::g_eq_event));
 }
 
 /**----------------------------------------------------------
@@ -656,8 +649,8 @@ int BG96Interface::socket_send(void *handle, const void *data, unsigned size)
     BG96SOCKET *sock = (BG96SOCKET *)handle;
     TXEVENT *txsock;
     
-    txrx_mutex.lock();
     debugOutput(DBGMSG_DRV,"ENTER socket_send(),socket %d, send %d bytes",sock->id,size);
+    txrx_mutex.lock();
     txsock = &g_socTx[sock->id];
 
     if( size < 1 || data == NULL )  // should never happen but have seen it
@@ -685,6 +678,11 @@ int BG96Interface::socket_send(void *handle, const void *data, unsigned size)
                 return NSAPI_ERROR_WOULD_BLOCK;
                 }
             //all data sent so fall through to TX_COMPLETE
+            if( txsock->m_tx_state == TX_DOCB ) {
+                debugOutput(DBGMSG_DRV,"Call socket %d TX call-back",sock->id);
+                txsock->m_tx_state = TX_COMPLETE;
+                txsock->m_tx_callback( txsock->m_tx_cb_data );
+                }
 
         case TX_COMPLETE:
             debugOutput(DBGMSG_DRV,"EXIT socket_send(), socket %d, sent %d bytes", txsock->m_tx_socketID,txsock->m_tx_total_sent);
@@ -697,53 +695,12 @@ int BG96Interface::socket_send(void *handle, const void *data, unsigned size)
             txrx_mutex.unlock();
             return NSAPI_ERROR_WOULD_BLOCK;
 
+        case TX_DOCB:
         default:
             debugOutput(DBGMSG_DRV,"EXIT socket_send(), NSAPI_ERROR_DEVICE_ERROR");
             txrx_mutex.unlock();
             return NSAPI_ERROR_DEVICE_ERROR;
         }
-}
-
-
-/**----------------------------------------------------------
-*  @brief  send data, if more data than BG96 can handle at one
-*          send as much as possible, and schedule another event
-*  @param  pointer to TXEVENT structure
-*  @retval 1 if need to schedule another event, 0 if data sent
-*/
-int BG96Interface::tx_event(TXEVENT *ptr)
-{
-    debugOutput(DBGMSG_EQ,"ENTER tx_event(), socket id %d",ptr->m_tx_socketID);
-
-    dbgIO_lock;
-    bool done =_BG96.send(ptr->m_tx_socketID, ptr->m_tx_dptr, ptr->m_tx_req_size);
-    dbgIO_unlock;
-
-    if( done )
-        ptr->m_tx_total_sent += ptr->m_tx_req_size;
-    else{
-        debugOutput(DBGMSG_EQ,"EXIT tx_event(), socket id %d, sent no data!",ptr->m_tx_socketID);
-        return 1;
-        }
-    
-    if( ptr->m_tx_total_sent < ptr->m_tx_orig_size ) {
-        ptr->m_tx_dptr += ptr->m_tx_req_size;
-        ptr->m_tx_req_size = ptr->m_tx_orig_size-ptr->m_tx_total_sent;
-
-        if( ptr->m_tx_req_size > BG96::BG96_BUFF_SIZE) 
-            ptr->m_tx_req_size= BG96::BG96_BUFF_SIZE;
-
-        debugOutput(DBGMSG_EQ,"EXIT tx_event(), need to send %d more bytes.",ptr->m_tx_req_size);
-        return 1;
-        }
-    debugOutput(DBGMSG_EQ,"EXIT tx_event, socket id %d, sent %d bytes",ptr->m_tx_socketID,ptr->m_tx_total_sent);
-    ptr->m_tx_state = TX_COMPLETE;
-    if( ptr->m_tx_callback != NULL ) 
-        ptr->m_tx_callback( ptr->m_tx_cb_data );
-    ptr->m_tx_cb_data = NULL; 
-    ptr->m_tx_callback = NULL;
-
-    return 0;
 }
 
 /**----------------------------------------------------------
@@ -775,9 +732,8 @@ int BG96Interface::socket_recv(void *handle, void *data, unsigned size)
 {
     BG96SOCKET *sock = (BG96SOCKET *)handle;
     RXEVENT *rxsock;
-
+ 
     txrx_mutex.lock();
-        
     rxsock = &g_socRx[sock->id];
     debugOutput(DBGMSG_DRV,"ENTER socket_recv(), socket %d, request %d bytes",sock->id, size);
 
@@ -794,7 +750,7 @@ int BG96Interface::socket_recv(void *handle, void *data, unsigned size)
             rxsock->m_rx_req_size  = (uint32_t)size;
             rxsock->m_rx_total_cnt = 0;
             rxsock->m_rx_timer     = 0;
-            rxsock->m_rx_return_cnt=0;
+            rxsock->m_rx_return_cnt= 0;
 
             if( rxsock->m_rx_req_size > BG96::BG96_BUFF_SIZE) 
                 rxsock->m_rx_req_size= BG96::BG96_BUFF_SIZE;
@@ -808,7 +764,14 @@ int BG96Interface::socket_recv(void *handle, void *data, unsigned size)
                 txrx_mutex.unlock();
                 return NSAPI_ERROR_WOULD_BLOCK;
                 }
+
             //got data, fall thru and finish. no need to schedule the background task
+            if( rxsock->m_rx_state == READ_DOCB ) {
+                debugOutput(DBGMSG_DRV,"Call socket %d RX call-back",sock->id);
+                rxsock->m_rx_state = DATA_AVAILABLE;
+                rxsock->m_rx_callback( rxsock->m_rx_cb_data );
+                }
+
         case DATA_AVAILABLE:
             debugOutput(DBGMSG_DRV,"EXIT socket_recv(),socket %d, return %d bytes",sock->id, rxsock->m_rx_return_cnt);
             debugDump_arry((const uint8_t*)data,rxsock->m_rx_return_cnt);
@@ -823,6 +786,7 @@ int BG96Interface::socket_recv(void *handle, void *data, unsigned size)
             txrx_mutex.unlock();
             return NSAPI_ERROR_WOULD_BLOCK;
 
+        case READ_DOCB:
         default:
             debugOutput(DBGMSG_DRV,"EXIT socket_recv(), NSAPI_ERROR_DEVICE_ERROR");
             txrx_mutex.unlock();
@@ -844,26 +808,122 @@ int BG96Interface::rx_event(RXEVENT *ptr)
     dbgIO_unlock;
 
     if( cnt>0 ) {  //got data, return it to the caller
-        debugOutput(DBGMSG_EQ,"data received on socket id %d, cnt=%d", ptr->m_rx_socketID, cnt);
+        debugOutput(DBGMSG_EQ,"EXIT rx_event(), socket %d received %d bytes", ptr->m_rx_socketID, cnt);
         ptr->m_rx_return_cnt += cnt;
         ptr->m_rx_state = DATA_AVAILABLE;
         if( ptr->m_rx_callback != NULL ) 
-            ptr->m_rx_callback( ptr->m_rx_cb_data );
-        ptr->m_rx_cb_data = NULL; 
-        ptr->m_rx_callback = NULL;
-        return 0;
+            ptr->m_rx_state = READ_DOCB;
+        return EVENT_COMPLETE;
         }
     if( ++ptr->m_rx_timer > (BG96_READ_TIMEOUTMS/EQ_FREQ) && !ptr->m_rx_disTO ) {  //timed out waiting, return 0 to caller
+        if( !_BG96.chkRxAvail(ptr->m_rx_socketID) ) { //the BG96 is not responding so do a long delay and let it restart
+            ptr->m_rx_timer=0;
+            return EVENT_DELAY;
+            }
         debugOutput(DBGMSG_EQ,"EXIT rx_event(), socket id %d, rx data TIME-OUT!",ptr->m_rx_socketID);
         ptr->m_rx_state = DATA_AVAILABLE;
         ptr->m_rx_return_cnt = 0;
         if( ptr->m_rx_callback != NULL ) 
-            ptr->m_rx_callback( ptr->m_rx_cb_data );
-        ptr->m_rx_cb_data = NULL; 
-        ptr->m_rx_callback = NULL;
-        return 0;
+            ptr->m_rx_state = READ_DOCB;
+        return EVENT_COMPLETE;
         }
 
-    debugOutput(DBGMSG_EQ,"EXIT rx_event(), socket id %d, sechedule for more.",ptr->m_rx_socketID);
-    return 1;
+    debugOutput(DBGMSG_EQ,"EXIT rx_event(), socket id %d, sechedule for more. (%d in buffer)",
+                           ptr->m_rx_socketID, _BG96.rxAvail(ptr->m_rx_socketID));
+    return EVENT_GETMORE;
 }
+
+/**----------------------------------------------------------
+*  @brief  send data, if more data than BG96 can handle at one
+*          send as much as possible, and schedule another event
+*  @param  pointer to TXEVENT structure
+*  @retval 1 if need to schedule another event, 0 if data sent
+*/
+int BG96Interface::tx_event(TXEVENT *ptr)
+{
+    debugOutput(DBGMSG_EQ,"ENTER tx_event(), socket id %d",ptr->m_tx_socketID);
+
+    dbgIO_lock;
+    bool done =_BG96.send(ptr->m_tx_socketID, ptr->m_tx_dptr, ptr->m_tx_req_size);
+    dbgIO_unlock;
+
+    if( done )
+        ptr->m_tx_total_sent += ptr->m_tx_req_size;
+    else{
+        debugOutput(DBGMSG_EQ,"EXIT tx_event(), socket id %d, sent no data!",ptr->m_tx_socketID);
+        return EVENT_GETMORE;
+        }
+    
+    if( ptr->m_tx_total_sent < ptr->m_tx_orig_size ) {
+        ptr->m_tx_dptr += ptr->m_tx_req_size;
+        ptr->m_tx_req_size = ptr->m_tx_orig_size-ptr->m_tx_total_sent;
+
+        if( ptr->m_tx_req_size > BG96::BG96_BUFF_SIZE) 
+            ptr->m_tx_req_size= BG96::BG96_BUFF_SIZE;
+
+        debugOutput(DBGMSG_EQ,"EXIT tx_event(), need to send %d more bytes.",ptr->m_tx_req_size);
+        return EVENT_GETMORE;
+        }
+    debugOutput(DBGMSG_EQ,"EXIT tx_event, socket id %d, sent %d bytes",ptr->m_tx_socketID,ptr->m_tx_total_sent);
+    ptr->m_tx_state = TX_COMPLETE;
+    if( ptr->m_tx_callback != NULL ) 
+        ptr->m_tx_state = TX_DOCB;
+
+    return EVENT_COMPLETE;
+}
+
+
+/**----------------------------------------------------------
+*  @brief  periodic event(EventQueu thread) to check for RX and TX data. If checking for RX data with TO disabled
+*          slow down event checking after a while.
+*  @param  none
+*  @retval none
+*/
+void BG96Interface::g_eq_event(void)
+{
+    int done = txrx_mutex.trylock();
+    bool goSlow = false;
+
+    if( !done ) {
+        _bg96_queue.call_in(EQ_FREQ,mbed::Callback<void()>((BG96Interface*)this,&BG96Interface::g_eq_event));
+        return;
+        }
+
+    done = EVENT_COMPLETE;
+    for( unsigned int i=0; i<BG96_SOCKET_COUNT; i++ ) {
+        if( g_socRx[i].m_rx_state == READ_ACTIVE || g_socRx[i].m_rx_disTO) {
+            done |= rx_event(&g_socRx[i]);
+            goSlow |= ( g_socRx[i].m_rx_timer > ((BG96_READ_TIMEOUTMS/EQ_FREQ)*(EQ_FREQ_SLOW/EQ_FREQ)) );
+   
+            if( goSlow ) 
+                g_socRx[i].m_rx_timer = (BG96_READ_TIMEOUTMS/EQ_FREQ)*(EQ_FREQ_SLOW/EQ_FREQ);
+            }
+
+        if( g_socTx[i].m_tx_state == TX_ACTIVE ) {
+            goSlow = false;
+            done += tx_event(&g_socTx[i]);
+            }
+        }
+
+    for( unsigned int i=0; i<BG96_SOCKET_COUNT; i++ ) {
+        if( g_socRx[i].m_rx_state == READ_DOCB ) {
+            debugOutput(DBGMSG_EQ,"Call socket %d RX call-back",i);
+            g_socRx[i].m_rx_state = DATA_AVAILABLE;
+            g_socRx[i].m_rx_callback( g_socRx[i].m_rx_cb_data );
+            }
+
+        if( g_socTx[i].m_tx_state == TX_DOCB ) {
+            debugOutput(DBGMSG_EQ,"Call socket %d TX call-back",i);
+            g_socTx[i].m_tx_state = TX_COMPLETE;
+            g_socTx[i].m_tx_callback( g_socTx[i].m_tx_cb_data );
+            }
+         }
+
+    if( done & EVENT_DELAY )
+        _bg96_queue.call_in(EQ_LONG_DELAY,mbed::Callback<void()>((BG96Interface*)this,&BG96Interface::g_eq_event));
+    else if( done != EVENT_COMPLETE )  
+        _bg96_queue.call_in((goSlow?EQ_FREQ_SLOW:EQ_FREQ),mbed::Callback<void()>((BG96Interface*)this,&BG96Interface::g_eq_event));
+
+    txrx_mutex.unlock();
+}
+
