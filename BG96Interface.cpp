@@ -55,7 +55,6 @@
 #define EQ_LONG_DELAY          EQ_FREQ_SLOW*2           //when tne BG96 needs time to do an internal recover
 
 #define EVENT_COMPLETE         0                        //signals when a TX/RX event is complete
-#define EVENT_DELAY            0x80                     //signals when a the BG96 needs additional time
 #define EVENT_GETMORE          0x01                     //signals when we need additional TX/RX data
 
 //
@@ -182,6 +181,9 @@ nsapi_error_t BG96Interface::connect(const char *apn, const char *username, cons
     Timer t;
 
     debugOutput(DBGMSG_DRV,"BG96Interface::connect(%s,%s,%s) ENTER",apn,username,password);
+    if( g_isInitialized )
+        disconnect();
+
     if( !g_isInitialized ) {
         t.start();
         dbgIO_lock;
@@ -807,6 +809,11 @@ int BG96Interface::rx_event(RXEVENT *ptr)
     int cnt = _BG96.recv(ptr->m_rx_socketID, ptr->m_rx_dptr, ptr->m_rx_req_size);
     dbgIO_unlock;
 
+    if( cnt == NSAPI_ERROR_DEVICE_ERROR ) {
+        ptr->m_rx_timer=0;
+        return EVENT_GETMORE;
+        }
+
     if( cnt>0 ) {  //got data, return it to the caller
         debugOutput(DBGMSG_EQ,"EXIT rx_event(), socket %d received %d bytes", ptr->m_rx_socketID, cnt);
         ptr->m_rx_return_cnt += cnt;
@@ -815,11 +822,8 @@ int BG96Interface::rx_event(RXEVENT *ptr)
             ptr->m_rx_state = READ_DOCB;
         return EVENT_COMPLETE;
         }
+
     if( ++ptr->m_rx_timer > (BG96_READ_TIMEOUTMS/EQ_FREQ) && !ptr->m_rx_disTO ) {  //timed out waiting, return 0 to caller
-        if( !_BG96.chkRxAvail(ptr->m_rx_socketID) ) { //the BG96 is not responding so do a long delay and let it restart
-            ptr->m_rx_timer=0;
-            return EVENT_DELAY;
-            }
         debugOutput(DBGMSG_EQ,"EXIT rx_event(), socket id %d, rx data TIME-OUT!",ptr->m_rx_socketID);
         ptr->m_rx_state = DATA_AVAILABLE;
         ptr->m_rx_return_cnt = 0;
@@ -919,9 +923,7 @@ void BG96Interface::g_eq_event(void)
             }
          }
 
-    if( done & EVENT_DELAY )
-        _bg96_queue.call_in(EQ_LONG_DELAY,mbed::Callback<void()>((BG96Interface*)this,&BG96Interface::g_eq_event));
-    else if( done != EVENT_COMPLETE )  
+    if( done != EVENT_COMPLETE )  
         _bg96_queue.call_in((goSlow?EQ_FREQ_SLOW:EQ_FREQ),mbed::Callback<void()>((BG96Interface*)this,&BG96Interface::g_eq_event));
 
     txrx_mutex.unlock();

@@ -214,7 +214,7 @@ bool BG96::startup(void)
         
     _bg96_mutex.lock();
     _parser.set_timeout(BG96_1s_WAIT);
-    if( tx2bg96((char*)"ATE0") )
+    done=!tx2bg96((char*)"ATE0");
         done = tx2bg96((char*)"AT+COPS?");
     _parser.set_timeout(BG96_AT_TIMEOUT);
     _bg96_mutex.unlock();
@@ -264,6 +264,7 @@ nsapi_error_t BG96::connect(const char *apn, const char *username, const char *p
     done=false;
     while( !done && t.read_ms() < BG96_150s_TO ) 
         done = tx2bg96(cmd);
+
     _bg96_mutex.unlock();
     
     return done? NSAPI_ERROR_OK : NSAPI_ERROR_DEVICE_ERROR;
@@ -340,6 +341,7 @@ bool BG96::writeable()
 */
 const char *BG96::getIPAddress(char *ipstr)
 {
+//    Timer t;
     int   cs, ct;
     bool  done=false;
 
@@ -535,13 +537,13 @@ int32_t BG96::recv(int id, void *data, uint32_t cnt)
             _parser.getc(); //for some reason BG96 always outputs a 0x0A before the data
             _parser.read((char*)data, rxCount);
 
-            if( !_parser.recv("OK") ) {
-                _bg96_mutex.unlock();
-                return NSAPI_ERROR_DEVICE_ERROR;
-                }
+            if( !_parser.recv("OK") ) 
+                rxCount = NSAPI_ERROR_DEVICE_ERROR;
             }
         ret_cnt = rxCount;
         }
+    else
+        ret_cnt = NSAPI_ERROR_DEVICE_ERROR;
     _bg96_mutex.unlock();
     return ret_cnt;
 }
