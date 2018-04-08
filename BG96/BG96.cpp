@@ -341,7 +341,6 @@ bool BG96::writeable()
 */
 const char *BG96::getIPAddress(char *ipstr)
 {
-//    Timer t;
     int   cs, ct;
     bool  done=false;
 
