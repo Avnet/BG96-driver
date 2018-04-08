@@ -214,7 +214,7 @@ bool BG96::startup(void)
         
     _bg96_mutex.lock();
     _parser.set_timeout(BG96_1s_WAIT);
-    done=!tx2bg96((char*)"ATE0");
+    if( tx2bg96((char*)"ATE0") )
         done = tx2bg96((char*)"AT+COPS?");
     _parser.set_timeout(BG96_AT_TIMEOUT);
     _bg96_mutex.unlock();
