@@ -793,7 +793,6 @@ int BG96Interface::socket_recv(void *handle, void *data, unsigned size)
         case READ_ACTIVE:
         case READ_INIT:
             debugOutput(DBGMSG_DRV,"EXIT socket_recv(), socket id %d, READ_ACTIVE/INIT", sock->id);
-            rxsock->m_rx_timer    = 0;  //reset the time-out timer
             txrx_mutex.unlock();
             return NSAPI_ERROR_WOULD_BLOCK;
 
