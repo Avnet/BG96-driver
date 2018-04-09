@@ -317,7 +317,7 @@ private:
     int        rx_event(RXEVENT *ptr);                  //called to RX data
     void       g_eq_event(void);                        //event queue to tx/rx
 
-    bool       g_isInitialized;                         //TRUE if the BG96Interface is connected to the network
+    nsapi_error_t g_isInitialized;                      //TRUE if the BG96Interface is connected to the network
     int        g_bg96_queue_id;                         //the ID of the EventQueue used by the driver
 
     BG96SOCKET g_sock[BG96_SOCKET_COUNT];               //

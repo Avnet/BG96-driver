@@ -278,8 +278,11 @@ nsapi_error_t BG96::connect(const char *apn, const char *username, const char *p
 bool BG96::disconnect(void)
 {
     char buff[15];
+    _parser.set_timeout(BG96_60s_TO);
     sprintf(buff,"AT+QIDEACT=%d\r",_contextID);
-    return tx2bg96(buff);
+    bool ok = tx2bg96(buff);
+    _parser.set_timeout(BG96_AT_TIMEOUT);
+    return ok;
 }
 
 /** ----------------------------------------------------------
@@ -362,15 +365,14 @@ const char *BG96::getIPAddress(char *ipstr)
 const char *BG96::getMACAddress(char* sn)
 {
  
-    memset(sn,0x00,sizeof(sn));    
     _bg96_mutex.lock();
     if( _parser.send("AT+QCCID") ) {
-        memset(sn,':',sizeof(sn));    
         _parser.recv("+QCCID: %c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c",
             &sn[26], &sn[25], &sn[24],&sn[23],&sn[22],
             &sn[21], &sn[19], &sn[18],&sn[16],&sn[15],
             &sn[13], &sn[12], &sn[10],&sn[9], &sn[7],
             &sn[6],  &sn[4],  &sn[3], &sn[1], &sn[0]); 
+        sn[2] = sn[5] = sn[8] = sn[11] = sn[14] = sn[17] = ':';
         sn[20] = 0x00; 
         }
     _bg96_mutex.unlock();
