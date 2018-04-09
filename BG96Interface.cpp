@@ -52,7 +52,6 @@
 #define BG96_READ_TIMEOUTMS    30000                    //read timeout in MS
 #define EQ_FREQ                50                       //frequency in ms to check for Tx/Rx data
 #define EQ_FREQ_SLOW           2000                     //frequency in ms to check when in slow monitor mode
-#define EQ_LONG_DELAY          EQ_FREQ_SLOW*2           //when tne BG96 needs time to do an internal recover
 
 #define EVENT_COMPLETE         0                        //signals when a TX/RX event is complete
 #define EVENT_GETMORE          0x01                     //signals when we need additional TX/RX data
@@ -135,7 +134,7 @@ void BG96Interface::_dbOut(int who, const char* format, ...)
 *  @retval none
 */
 BG96Interface::BG96Interface(void) : 
-    g_isInitialized(false),
+    g_isInitialized(NSAPI_ERROR_NO_CONNECTION),
     g_bg96_queue_id(-1),
     _BG96(false)
 {
@@ -172,32 +171,36 @@ BG96Interface::~BG96Interface()
 */
 nsapi_error_t BG96Interface::connect(void)
 {
+    nsapi_error_t ret = NSAPI_ERROR_OK;
     debugOutput(DBGMSG_DRV,"BG96Interface::connect(void) ENTER.");
-    return connect(DEFAULT_APN, NULL, NULL);
+    if( g_isInitialized == NSAPI_ERROR_NO_CONNECTION )
+        ret = connect(DEFAULT_APN, NULL, NULL);
+
+    return (ret == NSAPI_ERROR_NO_CONNECTION);
 }
 
 nsapi_error_t BG96Interface::connect(const char *apn, const char *username, const char *password)
 {
     Timer t;
+    bool  ok=false;
 
     debugOutput(DBGMSG_DRV,"BG96Interface::connect(%s,%s,%s) ENTER",apn,username,password);
-    if( g_isInitialized )
-        disconnect();
 
-    if( !g_isInitialized ) {
-        t.start();
-        dbgIO_lock;
-        while(t.read_ms() < BG96_MISC_TIMEOUT && !g_isInitialized) 
-            g_isInitialized= _BG96.startup();
-        dbgIO_unlock;
-        }
+    if( g_isInitialized == NSAPI_ERROR_IS_CONNECTED ) 
+        ok = disconnect();
 
-    if( g_isInitialized && g_bg96_queue_id == -1) 
+    t.start();
+    dbgIO_lock;
+    while(t.read_ms() < BG96_MISC_TIMEOUT && !ok) 
+        ok = _BG96.startup();
+    dbgIO_unlock;
+
+    if( ok && g_bg96_queue_id == -1) 
         g_bg96_queue_id = _bg96_monitor.start(callback(&_bg96_queue, &EventQueue::dispatch_forever));
 
     debugOutput(DBGMSG_DRV,"BG96Interface::connect EXIT");
 
-    return g_isInitialized? set_credentials(apn, username, password) : NSAPI_ERROR_DEVICE_ERROR;
+    return ok? set_credentials(apn, username, password) : NSAPI_ERROR_DEVICE_ERROR;
 }
 
 /** Set the cellular network credentials --------------------
@@ -209,11 +212,10 @@ nsapi_error_t BG96Interface::connect(const char *apn, const char *username, cons
 */
 nsapi_error_t BG96Interface::set_credentials(const char *apn, const char *username, const char *password)
 {
-    nsapi_error_t ret;
-
     debugOutput(DBGMSG_DRV,"BG96Interface::set_credentials ENTER/EXIT, APN=%s, USER=%s, PASS=%s",apn,username,password);
-    ret = _BG96.connect((char*)apn, (char*)username, (char*)password);
-    return ret;
+    g_isInitialized = (_BG96.connect((char*)apn, (char*)username, (char*)password)==true)? NSAPI_ERROR_NO_CONNECTION : NSAPI_ERROR_IS_CONNECTED;
+
+    return g_isInitialized;
 }
  
 /**----------------------------------------------------------
@@ -229,6 +231,7 @@ int BG96Interface::disconnect(void)
     debugOutput(DBGMSG_DRV,"BG96Interface::disconnect ENTER");
     _bg96_queue.cancel(g_bg96_queue_id);
     g_bg96_queue_id = -1; 
+    g_isInitialized = NSAPI_ERROR_NO_CONNECTION;
     dbgIO_lock;
     ret = _BG96.disconnect();
     dbgIO_unlock;
@@ -249,6 +252,7 @@ const char *BG96Interface::get_ip_address()
     dbgIO_lock;
     const char* ptr = _BG96.getIPAddress(ip);
     dbgIO_unlock;
+
     debugOutput(DBGMSG_DRV,"BG96Interface::get_ip_address EXIT");
     return ptr;
 }
@@ -673,18 +677,21 @@ int BG96Interface::socket_send(void *handle, const void *data, unsigned size)
             if( txsock->m_tx_req_size > BG96::BG96_BUFF_SIZE ) 
                 txsock->m_tx_req_size= BG96::BG96_BUFF_SIZE;
 
-            if( tx_event(txsock) ) {   //if we didn't sent all the data, schedule background send the rest
+            if( tx_event(txsock) != EVENT_COMPLETE ) {   //if we didn't sent all the data, schedule background send the rest
                 txsock->m_tx_state = TX_ACTIVE;
                 _bg96_queue.call_in(EQ_FREQ,mbed::Callback<void()>((BG96Interface*)this,&BG96Interface::g_eq_event));
                 txrx_mutex.unlock();
                 return NSAPI_ERROR_WOULD_BLOCK;
                 }
-            //all data sent so fall through to TX_COMPLETE
+            // fall through
+
             if( txsock->m_tx_state == TX_DOCB ) {
                 debugOutput(DBGMSG_DRV,"Call socket %d TX call-back",sock->id);
                 txsock->m_tx_state = TX_COMPLETE;
                 txsock->m_tx_callback( txsock->m_tx_cb_data );
                 }
+
+            // fall through
 
         case TX_COMPLETE:
             debugOutput(DBGMSG_DRV,"EXIT socket_send(), socket %d, sent %d bytes", txsock->m_tx_socketID,txsock->m_tx_total_sent);
@@ -735,13 +742,12 @@ int BG96Interface::socket_recv(void *handle, void *data, unsigned size)
     BG96SOCKET *sock = (BG96SOCKET *)handle;
     RXEVENT *rxsock;
  
+    if( size < 1 || data == NULL )  // should never happen
+        return 0;
+
     txrx_mutex.lock();
     rxsock = &g_socRx[sock->id];
     debugOutput(DBGMSG_DRV,"ENTER socket_recv(), socket %d, request %d bytes",sock->id, size);
-
-    if( size < 1 || data == NULL ) { // should never happen
-        return 0;
-        }
 
     switch( rxsock->m_rx_state ) {
         case READ_START:  //need to start a read sequence of events
@@ -760,10 +766,11 @@ int BG96Interface::socket_recv(void *handle, void *data, unsigned size)
             rxsock->m_rx_callback = sock->_callback;
             rxsock->m_rx_cb_data  = sock->_data;
 
-            if( rx_event(rxsock) ){
+            if( rx_event(rxsock) != EVENT_COMPLETE ){
                 rxsock->m_rx_state = READ_ACTIVE;
                 _bg96_queue.call_in(EQ_FREQ,mbed::Callback<void()>((BG96Interface*)this,&BG96Interface::g_eq_event));
                 txrx_mutex.unlock();
+                debugOutput(DBGMSG_DRV,"EXIT socket_recv, scheduled read of socket %d.", sock->id);
                 return NSAPI_ERROR_WOULD_BLOCK;
                 }
 
@@ -773,6 +780,8 @@ int BG96Interface::socket_recv(void *handle, void *data, unsigned size)
                 rxsock->m_rx_state = DATA_AVAILABLE;
                 rxsock->m_rx_callback( rxsock->m_rx_cb_data );
                 }
+
+            // fall through
 
         case DATA_AVAILABLE:
             debugOutput(DBGMSG_DRV,"EXIT socket_recv(),socket %d, return %d bytes",sock->id, rxsock->m_rx_return_cnt);
@@ -810,6 +819,7 @@ int BG96Interface::rx_event(RXEVENT *ptr)
     dbgIO_unlock;
 
     if( cnt == NSAPI_ERROR_DEVICE_ERROR ) {
+        debugOutput(DBGMSG_EQ,"EXIT rx_event(), error reading socket %d", ptr->m_rx_socketID);
         ptr->m_rx_timer=0;
         return EVENT_GETMORE;
         }
@@ -832,8 +842,8 @@ int BG96Interface::rx_event(RXEVENT *ptr)
         return EVENT_COMPLETE;
         }
 
-    debugOutput(DBGMSG_EQ,"EXIT rx_event(), socket id %d, sechedule for more. (%d in buffer)",
-                           ptr->m_rx_socketID, _BG96.rxAvail(ptr->m_rx_socketID));
+    debugOutput(DBGMSG_EQ,"EXIT rx_event(), socket id %d, sechedule for more.",
+                           ptr->m_rx_socketID);
     return EVENT_GETMORE;
 }
 
