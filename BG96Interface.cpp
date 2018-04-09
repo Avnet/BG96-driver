@@ -656,11 +656,12 @@ int BG96Interface::socket_send(void *handle, const void *data, unsigned size)
     TXEVENT *txsock;
     
     debugOutput(DBGMSG_DRV,"ENTER socket_send(),socket %d, send %d bytes",sock->id,size);
-    txrx_mutex.lock();
-    txsock = &g_socTx[sock->id];
 
     if( size < 1 || data == NULL )  // should never happen but have seen it
         return 0; 
+
+    txrx_mutex.lock();
+    txsock = &g_socTx[sock->id];
 
     switch( txsock->m_tx_state ) {
         case TX_IDLE:
