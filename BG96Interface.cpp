@@ -136,6 +136,7 @@ void BG96Interface::_dbOut(int who, const char* format, ...)
 BG96Interface::BG96Interface(void) : 
     g_isInitialized(NSAPI_ERROR_NO_CONNECTION),
     g_bg96_queue_id(-1),
+    scheduled_events(0),
     _BG96(false)
 {
     for( int i=0; i<BG96_SOCKET_COUNT; i++ ) {
@@ -334,7 +335,7 @@ int BG96Interface::socket_listen(void *handle, int backlog)
                  socket->id, socket->connected? "YES":"NO");
     if( !socket->connected ) {
         socket->disTO   = true; 
-        _bg96_queue.call_in(EQ_FREQ,mbed::Callback<void()>((BG96Interface*)this,&BG96Interface::g_eq_event));
+        _eq_schedule();
         }
     else
         ret = NSAPI_ERROR_NO_CONNECTION;
@@ -501,10 +502,10 @@ int BG96Interface::socket_close(void *handle)
     debugOutput(DBGMSG_DRV,"ENTER socket_close(); Socket=%d", i);
 
     if(i >= 0) {
+        txrx_mutex.lock();
         txsock = &g_socTx[i];
         rxsock = &g_socRx[i];
 
-        txrx_mutex.lock();
         txsock->m_tx_state = TX_IDLE;
         rxsock->m_rx_state = READ_START;
 
@@ -679,8 +680,9 @@ int BG96Interface::socket_send(void *handle, const void *data, unsigned size)
                 txsock->m_tx_req_size= BG96::BG96_BUFF_SIZE;
 
             if( tx_event(txsock) != EVENT_COMPLETE ) {   //if we didn't sent all the data, schedule background send the rest
+                debugOutput(DBGMSG_DRV,"Schedule TX event for socket %d",sock->id);
                 txsock->m_tx_state = TX_ACTIVE;
-                _bg96_queue.call_in(EQ_FREQ,mbed::Callback<void()>((BG96Interface*)this,&BG96Interface::g_eq_event));
+                _eq_schedule();
                 txrx_mutex.unlock();
                 return NSAPI_ERROR_WOULD_BLOCK;
                 }
@@ -702,6 +704,7 @@ int BG96Interface::socket_send(void *handle, const void *data, unsigned size)
 
         case TX_ACTIVE:
         case TX_STARTING:
+            debugOutput(DBGMSG_DRV,"EXIT socket_send(), TX_ACTIVE/TX_STARTING");
             txrx_mutex.unlock();
             return NSAPI_ERROR_WOULD_BLOCK;
 
@@ -766,12 +769,12 @@ int BG96Interface::socket_recv(void *handle, void *data, unsigned size)
                 
             rxsock->m_rx_callback = sock->_callback;
             rxsock->m_rx_cb_data  = sock->_data;
-
+            // fall through
             if( rx_event(rxsock) != EVENT_COMPLETE ){
                 rxsock->m_rx_state = READ_ACTIVE;
-                _bg96_queue.call_in(EQ_FREQ,mbed::Callback<void()>((BG96Interface*)this,&BG96Interface::g_eq_event));
-                txrx_mutex.unlock();
+                _eq_schedule();
                 debugOutput(DBGMSG_DRV,"EXIT socket_recv, scheduled read of socket %d.", sock->id);
+                txrx_mutex.unlock();
                 return NSAPI_ERROR_WOULD_BLOCK;
                 }
 
@@ -898,8 +901,11 @@ void BG96Interface::g_eq_event(void)
     int done = txrx_mutex.trylock();
     bool goSlow = false;
 
+    if( scheduled_events > 0 )
+        scheduled_events--;
+
     if( !done ) {
-        _bg96_queue.call_in(EQ_FREQ,mbed::Callback<void()>((BG96Interface*)this,&BG96Interface::g_eq_event));
+        _eq_schedule();
         return;
         }
 
@@ -915,7 +921,7 @@ void BG96Interface::g_eq_event(void)
 
         if( g_socTx[i].m_tx_state == TX_ACTIVE ) {
             goSlow = false;
-            done += tx_event(&g_socTx[i]);
+            done |= tx_event(&g_socTx[i]);
             }
         }
 
@@ -934,8 +940,18 @@ void BG96Interface::g_eq_event(void)
          }
 
     if( done != EVENT_COMPLETE )  
-        _bg96_queue.call_in((goSlow?EQ_FREQ_SLOW:EQ_FREQ),mbed::Callback<void()>((BG96Interface*)this,&BG96Interface::g_eq_event));
+        _eq_schedule();
 
+    debugOutput(DBGMSG_EQ, "EXIT eq_event, queue=%d\n", scheduled_events);
     txrx_mutex.unlock();
+}
+
+
+void BG96Interface::_eq_schedule(void)
+{
+    if( scheduled_events < BG96_SOCKET_COUNT ) {
+        scheduled_events++;
+        _bg96_queue.call_in(EQ_FREQ,mbed::Callback<void()>((BG96Interface*)this,&BG96Interface::g_eq_event));
+        }
 }
 

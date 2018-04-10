@@ -316,9 +316,11 @@ private:
     int        tx_event(TXEVENT *ptr);                  //called to TX data
     int        rx_event(RXEVENT *ptr);                  //called to RX data
     void       g_eq_event(void);                        //event queue to tx/rx
+    void       _eq_schedule(void);
 
     nsapi_error_t g_isInitialized;                      //TRUE if the BG96Interface is connected to the network
     int        g_bg96_queue_id;                         //the ID of the EventQueue used by the driver
+    uint32_t   scheduled_events;
 
     BG96SOCKET g_sock[BG96_SOCKET_COUNT];               //
     TXEVENT    g_socTx[BG96_SOCKET_COUNT];              //
