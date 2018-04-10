@@ -417,6 +417,9 @@ bool BG96::open(const char type, int id, const char* addr, int port)
         && err == 0;
     _parser.set_timeout(BG96_AT_TIMEOUT);
     _bg96_mutex.unlock();
+    if( ok )
+        while( recv(id, cmd, sizeof(cmd)) ) 
+            /* clear out any residual data in BG96 buffer */;
 
     return ok;
 }
