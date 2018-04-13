@@ -36,19 +36,19 @@
  
 // If target board does not support Arduino pins, define pins as Not Connected
 #if defined(TARGET_FF_ARDUINO)
-#if !define(MBED_CONF_BG96_LIBRARY_BG96_TX)
+#if !defined(BED_CONF_BG96_LIBRARY_BG96_TX)
 #define MBED_CONF_BG96_LIBRARY_BG96_TX               D8
 #endif
-#if !define(MBED_CONF_BG96_LIBRARY_BG96_RX)
+#if !defined(MBED_CONF_BG96_LIBRARY_BG96_RX)
 #define MBED_CONF_BG96_LIBRARY_BG96_RX               D2
 #endif
-#if !define(MBED_CONF_BG96_LIBRARY_BG96_RESET)
+#if !defined(MBED_CONF_BG96_LIBRARY_BG96_RESET)
 #define MBED_CONF_BG96_LIBRARY_BG96_RESET            D7
 #endif
-#if !define(MBED_CONF_BG96_LIBRARY_BG96_WAKE)
+#if !defined(MBED_CONF_BG96_LIBRARY_BG96_WAKE)
 #define MBED_CONF_BG96_LIBRARY_BG96_WAKE             D11
 #endif
-#if !define(MBED_CONF_BG96_LIBRARY_BG96_PWRKEY)
+#if !defined(MBED_CONF_BG96_LIBRARY_BG96_PWRKEY)
 #define MBED_CONF_BG96_LIBRARY_BG96_PWRKEY           D10
 #endif
 #else // !defined(TARGET_FF_ARDUINO)
