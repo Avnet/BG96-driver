@@ -1,0 +1,39 @@
+{
+    "name": "bg96-library",
+    "config": {
+        "bg96-debug": {
+            "help" : "enable or disable BG96 debug messages.",
+            "value": "true"
+        },
+        "bg96-debug_setting": {
+            "help" : "bit value 1 and/or 2 enable debug output, bit value 4 enables mbed driver debug output.",
+            "value": "0x84"
+        },
+        "bg96-tx": {
+            "help": "TX pin for serial connection to BG96 on the NUCLEO Board",
+            "value": "D8"
+        },
+        "bg96-rx": {
+            "help": "RX pin for serial connection to BG96 on the NUCLEO Board",
+            "value": "D2"
+        },
+        "bg96-reset": {
+            "help": "BG96 Reset pin",
+            "value": "D7"
+        },
+        "bg96-wake": {
+            "help": "BG96 Wake pin",
+            "value": "D11"
+        },
+        "bg96-pwrkey": {
+            "help": "BG96 PWRKEY pin",
+            "value": "D10"
+        }
+    },
+    "target_overrides": {
+         "K64F": {
+             "bg96-tx": "D1",
+             "bg96-rx": "D0"
+         }
+    }
+}
