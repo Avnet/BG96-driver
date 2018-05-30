@@ -36,7 +36,7 @@
  
 // If target board does not support Arduino pins, define pins as Not Connected
 #if defined(TARGET_FF_ARDUINO)
-#if !defined(BED_CONF_BG96_LIBRARY_BG96_TX)
+#if !defined(MBED_CONF_BG96_LIBRARY_BG96_TX)
 #define MBED_CONF_BG96_LIBRARY_BG96_TX               D8
 #endif
 #if !defined(MBED_CONF_BG96_LIBRARY_BG96_RX)
