@@ -48,8 +48,10 @@
 #define TX_ACTIVE            22                        //indicates that TX data is being sent
 #define TX_COMPLETE          23                        //all TX data has been sent
 #define TX_DOCB              24                        //indicatew we need to exeucte the call-back
-                              
+
+#if !defined(BG96_READ_TIMEOUTMS)
 #define BG96_READ_TIMEOUTMS    30000                    //read timeout in MS
+#endif
 #define EQ_FREQ                50                       //frequency in ms to check for Tx/Rx data
 #define EQ_FREQ_SLOW           2000                     //frequency in ms to check when in slow monitor mode
 
