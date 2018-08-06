@@ -35,7 +35,7 @@
          "K64F": {
              "bg96-tx": "D1",
              "bg96-rx": "D0"
-         }
+         },
          "NUCLEO_L496ZG": {
              "bg96-tx": "D1",
              "bg96-rx": "D0"
