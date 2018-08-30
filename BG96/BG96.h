@@ -111,6 +111,14 @@ public:
     bool disconnect(void);
  
     /**
+    * Get the RSSI of the BG96
+    *
+    * @retval integet representing the RSSI, 1=poor,2=weak,3=mid-level,4=good,5=strong; 
+    *         0=not available 
+    */
+    int getRSSI(void);
+
+    /**
     * Get the IP address of BG96
     *
     * @return null-teriminated IP address or null if no IP address is assigned
