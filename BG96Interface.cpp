@@ -49,8 +49,8 @@
 #define TX_COMPLETE          23                        //all TX data has been sent
 #define TX_DOCB              24                        //indicatew we need to exeucte the call-back
 
-#if !defined(BG96_READ_TIMEOUTMS)
-#define BG96_READ_TIMEOUTMS    30000                    //read timeout in MS
+#if !defined(BG96_LIBRARY_READ_TIMEOUTMS)
+#define BG96_LIBRARY_READ_TIMEOUTMS    30000                    //read timeout in MS
 #endif
 #define EQ_FREQ                50                       //frequency in ms to check for Tx/Rx data
 #define EQ_FREQ_SLOW           2000                     //frequency in ms to check when in slow monitor mode
@@ -194,7 +194,7 @@ nsapi_error_t BG96Interface::connect(const char *apn, const char *username, cons
 
     t.start();
     dbgIO_lock;
-    while(t.read_ms() < BG96_MISC_TIMEOUT && !ok) 
+    while(t.read_ms() < BG96_LIBRARY_READ_TIMEOUTMS && !ok) 
         ok = _BG96.startup();
     dbgIO_unlock;
 
@@ -240,6 +240,16 @@ int BG96Interface::disconnect(void)
     dbgIO_unlock;
     debugOutput(DBGMSG_DRV,"BG96Interface::disconnect EXIT");
     return ret? NSAPI_ERROR_OK:NSAPI_ERROR_DEVICE_ERROR;
+}
+
+int BG96Interface::get_rssi()
+{
+    debugOutput(DBGMSG_DRV,"BG96Interface::get_rssi ENTER");
+    dbgIO_lock;
+    int rssi = _BG96.getRSSI();
+    dbgIO_unlock;
+    debugOutput(DBGMSG_DRV,"BG96Interface::get_rssi EXIT");
+    return rssi;
 }
 
 /**----------------------------------------------------------
@@ -838,7 +848,7 @@ int BG96Interface::rx_event(RXEVENT *ptr)
         return EVENT_COMPLETE;
         }
 
-    if( ++ptr->m_rx_timer > (BG96_READ_TIMEOUTMS/EQ_FREQ) && !ptr->m_rx_disTO ) {  //timed out waiting, return 0 to caller
+    if( ++ptr->m_rx_timer > (BG96_LIBRARY_READ_TIMEOUTMS/EQ_FREQ) && !ptr->m_rx_disTO ) {  //timed out waiting, return 0 to caller
         debugOutput(DBGMSG_EQ,"EXIT rx_event(), socket id %d, rx data TIME-OUT!",ptr->m_rx_socketID);
         ptr->m_rx_state = DATA_AVAILABLE;
         ptr->m_rx_return_cnt = 0;
@@ -915,10 +925,10 @@ void BG96Interface::g_eq_event(void)
     for( unsigned int i=0; i<BG96_SOCKET_COUNT; i++ ) {
         if( g_socRx[i].m_rx_state == READ_ACTIVE || g_socRx[i].m_rx_disTO) {
             done |= rx_event(&g_socRx[i]);
-            goSlow |= ( g_socRx[i].m_rx_timer > ((BG96_READ_TIMEOUTMS/EQ_FREQ)*(EQ_FREQ_SLOW/EQ_FREQ)) );
+            goSlow |= ( g_socRx[i].m_rx_timer > ((BG96_LIBRARY_READ_TIMEOUTMS/EQ_FREQ)*(EQ_FREQ_SLOW/EQ_FREQ)) );
    
             if( goSlow ) 
-                g_socRx[i].m_rx_timer = (BG96_READ_TIMEOUTMS/EQ_FREQ)*(EQ_FREQ_SLOW/EQ_FREQ);
+                g_socRx[i].m_rx_timer = (BG96_LIBRARY_READ_TIMEOUTMS/EQ_FREQ)*(EQ_FREQ_SLOW/EQ_FREQ);
             }
 
         if( g_socTx[i].m_tx_state == TX_ACTIVE ) {

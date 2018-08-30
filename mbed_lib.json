@@ -1,6 +1,5 @@
 {
     "name": "bg96-library",
-    "macros": ["BG96_READ_TIMEOUTMS=2000"],
     "config": {
         "bg96-debug": {
             "help" : "enable or disable BG96 debug messages.",

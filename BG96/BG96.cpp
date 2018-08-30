@@ -336,6 +336,23 @@ bool BG96::writeable()
     return _serial.writable();
 }
 
+/** ----------------------------------------------------------
+* @brief  obtain the current RSSI 
+* @param  none
+* @retval integet representing the RSSI, 1=poor,2=weak,3=mid-level,4=good,5=strong; 0=not available 
+*/
+int BG96::getRSSI(void)
+{
+    int   cs, er;
+    bool  done=false;
+
+    _bg96_mutex.lock();
+    done = _parser.send("AT+CSQ") && _parser.recv("+CSQ: %d,%d",&cs,&er);
+    _bg96_mutex.unlock();
+
+    return done? cs:0;
+}
+
 
 /** ----------------------------------------------------------
 * @brief  obtain the IP address socket is using

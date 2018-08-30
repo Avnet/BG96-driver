@@ -48,6 +48,7 @@
 #define DBGMSG_ARRY          0x20
 
 #define FIRMWARE_REV(x)      (((BG96Interface*)x)->getRevision())
+#define BG96_RSSI(x)         ((BG96Interface*)x)->get_rssi()
 
 typedef struct rx_event_t {
     int      m_rx_state;            //state of the socket receive 
@@ -140,6 +141,12 @@ public:
      */
     virtual const char *get_mac_address();
  
+   /** Query Module RSSI
+     *
+     * @return          RSSI value
+     */
+    int get_rssi(void);
+
    /** Query Module SW revision
      *
      *  @return         SW Revision string
