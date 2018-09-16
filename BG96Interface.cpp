@@ -58,6 +58,10 @@
 #define EVENT_COMPLETE         0                        //signals when a TX/RX event is complete
 #define EVENT_GETMORE          0x01                     //signals when we need additional TX/RX data
 
+#if !defined (DEFAULT_APN)
+#define DEFAULT_APN            "m2m.com.attz"
+#endif
+
 //
 // The following are only used when debug is eabled.
 //
