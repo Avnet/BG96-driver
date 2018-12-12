@@ -241,6 +241,10 @@ public:
      */
     bool        chkRxAvail(int id);
 
+    int gps_pwr(bool on);
+
+    int gps_loc(gps_data *data);
+
 private:
     bool        tx2bg96(char* cmd);
     bool        BG96Ready(void);
