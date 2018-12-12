@@ -59,6 +59,20 @@
 #define MBED_CONF_BG96_LIBRARY_BG96_PWRKEY            NC
 #endif // !defined(TARGET_FF_ARDUINO)
 
+typedef struct gps_data_t {
+    float utc;      //hhmmss.sss
+    float lat;      //latitude. (-)dd.ddddd
+    float lon;      //longitude. (-)dd.ddddd
+    float hdop;     // Horizontal precision: 0.5-99.9
+    float altitude; //altitude of antenna from sea level (meters) 
+    int fix;        //GNSS position mode 2=2D, 3=3D
+    float cog;      //Course Over Ground ddd.mm
+    float spkm;     //Speed over ground (Km/h) xxxx.x
+    float spkn;     //Speed over ground (knots) xxxx.x
+    char date[7];   //data: ddmmyy
+    int nsat;       //number of satellites 0-12
+    } gps_data;
+
 /** BG96Interface class.
     Interface to a BG96 module.
  */

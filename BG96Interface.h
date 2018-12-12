@@ -168,6 +168,17 @@ public:
      */
     void doDebug( int v );
     
+    /** Enable/Disable GPS module
+     *
+     *  @param             true to turn on, false to turn off
+     */
+    bool startGPS(bool on);  
+
+    /** Get GPS info
+     *
+     *  @param             pointer to gps_data is updated
+     */
+    bool getGPS_loc(gps_data *gd);  
 
 protected:
 
