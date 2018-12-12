@@ -569,3 +569,46 @@ int32_t BG96::recv(int id, void *data, uint32_t cnt)
     return ret_cnt;
 }
 
+/** ----------------------------------------------------------
+* @brief  turn on/off GNSS module in BG96
+* @param  on (true) or off (false)
+* @retval true/false depending on success of operation
+*/
+int BG96::gps_pwr(bool on)
+{
+    return tx2bg96(on? (char*)"AT+QGPS=1":(char*)"AT+QGPSSEND");
+}
+
+
+/** ----------------------------------------------------------
+* @brief  get GPS location information from GNSS module
+* @param  pointer to gps_data struct
+* @retval true/false depending on success of operation
+*/
+int BG96::gps_loc(gps_data *data)
+{
+    bool ok = false;
+    char buff[100];
+    _bg96_mutex.lock();
+    data->utc = data->lat = data->lon = data->hdop= data->altitude = data->cog = data->spkm = data->spkn = data->nsat=0.0;
+    data->fix=0;
+    memset(&data->date, 0x00, 7);
+    while( !ok ) {
+        _parser.flush();    
+        _parser.send((char*)"AT+QGPSLOC=2");
+        ok = _parser.recv("+QGPSLOC: ");
+        if( ok ) {
+            _parser.recv("%s\r\n",buff);
+            sscanf(buff,"%f,%f,%f,%f,%f,%d,%f,%f,%f,%6s,%d",
+                          &data->utc, &data->lat, &data->lon, &data->hdop,
+                          &data->altitude, &data->fix, &data->cog,
+                          &data->spkm, &data->spkn, data->date, &data->nsat);
+            ok=_parser.recv("OK");
+            }
+         }
+    _bg96_mutex.unlock();
+
+    return ok;
+}
+
+

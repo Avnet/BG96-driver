@@ -971,3 +971,34 @@ void BG96Interface::_eq_schedule(void)
         }
 }
 
+
+/**---------------------------------------------------------- 
+* @brief  Start BG96 GNSS (GPS) module
+* @param  boolean true (turn on) or false (turn off)
+* @retval boolean true/false on success of requested action
+*/
+bool BG96Interface::startGPS(bool on)
+{
+    debugOutput(DBGMSG_DRV,"BG96Interface::startGPS(%s)",on?"ON":"OFF");
+    dbgIO_lock;
+    bool ok = _BG96.gps_pwr(on);
+    dbgIO_unlock;
+    debugOutput(DBGMSG_DRV,"BG96Interface::startGPS() %s",ok?"SUCCESSFUL":"FAILED");
+    return ok;
+}
+
+/**---------------------------------------------------------- 
+* @brief  Get BG96 GNSS (GPS) information
+* @param  pointer to gps_data that will be updated with current values
+* @retval boolean true (success) or false (failure)
+*/
+bool BG96Interface::getGPS_loc(gps_data *gd)
+{
+    debugOutput(DBGMSG_DRV,"BG96Interface::getGPS_loc ENTER");
+    dbgIO_lock;
+    bool ok = _BG96.gps_loc(gd);
+    dbgIO_unlock;
+    debugOutput(DBGMSG_DRV,"BG96Interface::getGPS_loc EXIT %s",ok?"SUCCESSFUL":"FAILED");
+    return ok;
+}
+
