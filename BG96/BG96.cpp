@@ -231,36 +231,27 @@ bool BG96::startup(void)
 */
 nsapi_error_t BG96::connect(const char *apn, const char *username, const char *password)
 {
-    char cmd[100],_apn[50];
-    bool done = false;
+    char  cmd[100],_apn[50];
+    bool  done = false;
     Timer t;
-    int   cntx;
     
     _bg96_mutex.lock();
-    t.start();
-    do {
-        _parser.send("AT+QICSGP=%d",_contextID);
-        done = _parser.recv("+QICSGP: %d, \"%50[^\"]\"",&cntx, _apn);
-        wait_ms(2);
-        }
-    while( !done && t.read_ms() < BG96_60s_TO );
 
-    if( !done ) {
+    _parser.flush();    
+    sprintf(cmd,"AT+CGDCONT=%d", _contextID);  //make sure _contextID is undefined
+    if( !tx2bg96(cmd) )  {
         _bg96_mutex.unlock();
         return NSAPI_ERROR_DEVICE_ERROR;
         }
 
-    _parser.flush();    
-    if( strcmp(_apn,apn) ) {
-        sprintf(cmd,"AT+QICSGP=%d,1,\"%s\",\"%s\",\"%s\",0", _contextID, &apn[0], &username[0], &password[0]);
-        if( !tx2bg96(cmd) )  {
-            _bg96_mutex.unlock();
-            return NSAPI_ERROR_DEVICE_ERROR;
-            }
+    sprintf(cmd,"AT+QICSGP=%d,1,\"%s\",\"%s\",\"%s\",0", _contextID, &apn[0], &username[0], &password[0]);
+    if( !tx2bg96(cmd) )  {
+        _bg96_mutex.unlock();
+        return NSAPI_ERROR_DEVICE_ERROR;
         }
 
     sprintf(cmd,"AT+QIACT=%d", _contextID);
-    t.reset();
+    t.start();
     done=false;
     while( !done && t.read_ms() < BG96_150s_TO ) 
         done = tx2bg96(cmd);
@@ -589,11 +580,14 @@ int BG96::gps_loc(gps_data *data)
 {
     bool ok = false;
     char buff[100];
+    Timer t;
+
     _bg96_mutex.lock();
     data->utc = data->lat = data->lon = data->hdop= data->altitude = data->cog = data->spkm = data->spkn = data->nsat=0.0;
     data->fix=0;
     memset(&data->date, 0x00, 7);
-    while( !ok ) {
+    t.start();
+    while( !ok && (t.read_ms() < BG96_150s_TO ) ) {
         _parser.flush();    
         _parser.send((char*)"AT+QGPSLOC=2");
         ok = _parser.recv("+QGPSLOC: ");
