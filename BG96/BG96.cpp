@@ -233,25 +233,40 @@ nsapi_error_t BG96::connect(const char *apn, const char *username, const char *p
 {
     char  cmd[100],_apn[50];
     bool  done = false;
+    int   cntx;
     Timer t;
     
     _bg96_mutex.lock();
-
-    _parser.flush();    
-    sprintf(cmd,"AT+CGDCONT=%d", _contextID);  //make sure _contextID is undefined
-    if( !tx2bg96(cmd) )  {
+    t.start();
+    do {
+        _parser.send("AT+QICSGP=%d",_contextID);
+        done = _parser.recv("+QICSGP: %d, \"%50[^\"]\"",&cntx, _apn);
+        wait_ms(2);
+        }
+    while( !done && t.read_ms() < BG96_60s_TO );
+    if( !done ) {
         _bg96_mutex.unlock();
         return NSAPI_ERROR_DEVICE_ERROR;
         }
 
-    sprintf(cmd,"AT+QICSGP=%d,1,\"%s\",\"%s\",\"%s\",0", _contextID, &apn[0], &username[0], &password[0]);
-    if( !tx2bg96(cmd) )  {
-        _bg96_mutex.unlock();
-        return NSAPI_ERROR_DEVICE_ERROR;
+
+    _parser.flush();
+
+    if( (cntx == _contextID) && strcmp(_apn,apn) ) {
+        sprintf(cmd,"AT+CGDCONT=%d", _contextID);  //delete the current entry and reset to the desired apn
+        if( !tx2bg96(cmd) )  {
+            _bg96_mutex.unlock();
+            return NSAPI_ERROR_DEVICE_ERROR;
+            }
+        sprintf(cmd,"AT+QICSGP=%d,1,\"%s\",\"%s\",\"%s\",0", _contextID, &apn[0], &username[0], &password[0]);
+        if( !tx2bg96(cmd) )  {
+            _bg96_mutex.unlock();
+            return NSAPI_ERROR_DEVICE_ERROR;
+            }
         }
 
     sprintf(cmd,"AT+QIACT=%d", _contextID);
-    t.start();
+    t.reset();
     done=false;
     while( !done && t.read_ms() < BG96_150s_TO ) 
         done = tx2bg96(cmd);
